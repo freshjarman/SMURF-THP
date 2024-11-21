@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
 class ScaledDotProductAttention(nn.Module):
     """ Scaled Dot-Product Attention """
 
@@ -37,10 +38,12 @@ class PositionwiseFeedForward(nn.Module):
     def forward(self, x):
         return self.w_2(self.dropout(self.activation.forward(self.w_1(x))))
 
+
 class GELU(nn.Module):
     """
     Paper Section 3.4, last paragraph notice that BERT used the GELU instead of RELU
     """
 
     def forward(self, x):
-        return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+        return 0.5 * x * (1 + torch.tanh(
+            math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))

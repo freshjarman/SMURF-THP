@@ -7,7 +7,7 @@ Code for SMURF-THP: Score Matching-based UnceRtainty quantiFication for Transfor
 * [PyTorch](https://pytorch.org/) version 1.8.0.
 
 ### Instructions
-* Put the data folder inside the root folder, modify the **data** entry in **.sh** files accordingly. The datasets are available [here](https://drive.google.com/drive/folders/0BwqmV0EcoUc8UklIR1BKV25YR1U?resourcekey=0-OrlU87jyc1m-dVMmY5aC4w&usp=sharing).
+* Put the data folder inside the root folder (i.e. parent folder of `SMURF-THP`), modify the **data** entry in **.sh** files accordingly. The datasets are available [here](https://drive.google.com/drive/folders/0BwqmV0EcoUc8UklIR1BKV25YR1U?resourcekey=0-OrlU87jyc1m-dVMmY5aC4w&usp=sharing).
 ```
 cd scripts/so
 # train and evaluate the model
