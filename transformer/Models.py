@@ -145,6 +145,7 @@ class Transformer(nn.Module):
 
 class smurf_thp(nn.Module):
     """ 
+    ! all options for the parameters listed below:
     decoder: encode
     add_noise: None, denoise
     noise_type: normal, truncated
@@ -232,25 +233,25 @@ class smurf_thp(nn.Module):
         """
         Return the hidden representations and predictions.
         For a sequence (l_1, l_2, ..., l_N), we predict (l_2, ..., l_N, l_{N+1}).
-        Input: event_type: batch*seq_len;
-               event_time: batch*seq_len.
-        Output: enc_output: batch*seq_len*model_dim;
-                type_prediction: batch*seq_len*num_classes (not normalized);
+        Input: event_type: batch*seq_len
+               event_time: batch*seq_len
+               time_gap: batch*(seq_len-1)
+        Output: enc_output: batch*seq_len*model_dim
+                type_prediction: batch*seq_len*num_classes (not normalized)
         """
-
         non_pad_mask = get_non_pad_mask(event_type)
         enc_output = self.encoder(event_type, event_time, non_pad_mask)
 
-        diff_time = time_gap
+        diff_time = time_gap  # batch*len-1, removed the first event
         diff_time *= non_pad_mask[:, 1:].squeeze(-1)
 
-        if self.config.noise_type == 'normal':
+        if self.config.noise_type == 'normal':  # add gaussian noise with self.config.var_noise (=0.1)
             noise = self.config.var_noise * torch.randn(
                 [*diff_time.size(), self.config.num_noise],
                 device=diff_time.device)
             t_noise = diff_time[:, :, None] + noise
             t_var = t_noise
-        elif self.config.noise_type == 'truncated':
+        elif self.config.noise_type == 'truncated':  # TODO: never used
             noise = self.config.var_noise * torch.randn(
                 [*diff_time.size(), self.config.num_noise],
                 device=diff_time.device)
@@ -279,7 +280,7 @@ class smurf_thp(nn.Module):
 
         # torch.autograd.set_detect_anomaly(True)
         obj = get_obj_denoise(diff_time, t_var, score, self.config.var_noise,
-                              non_pad_mask)
+                              non_pad_mask)  # (bsz, seqlen-1)
 
         return obj, type_prediction
 

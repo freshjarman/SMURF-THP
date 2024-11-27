@@ -93,7 +93,7 @@ def type_loss(prediction, types, loss_func, logit=True):
     loss = loss_func(prediction, truth, logit)
 
     if prediction.ndim == 4:
-        loss = loss.mean(2)
+        loss = loss.mean(2)  # (bsz, seqlen-1, num_noises)
     loss = torch.sum(loss)
     return loss
 
@@ -101,7 +101,7 @@ def type_loss(prediction, types, loss_func, logit=True):
 def predict_langevin(model, event_time, time_gap, event_type, prediction, opt,
                      sample_init):
     # event_time & event_type (batch*len)
-    # prediction (batch*len-1*num_types)
+    # prediction (batch*len-1*num_types), removed the first event
 
     if opt.model == 'smurf_thp':
         return predict_langevin_smurf(model, event_time, time_gap, event_type,
@@ -124,9 +124,9 @@ def evaluate_samples(t_sample, gt_t, type_sample, event_type, opt):
     q = torch.tensor([*eval_quantile, 0.5],
                      dtype=torch.float32,
                      device=event_type.device)
+    # quantile*batch*len-1
     t_sample_q = torch.quantile(t_sample, q,
-                                dim=-1) * non_pad_mask[:, 1:].squeeze(
-                                    2)  # quantile*batch*len-1
+                                dim=-1) * non_pad_mask[:, 1:].squeeze(2)
     t_sample_mean = t_sample.mean(-1) * non_pad_mask[:, 1:].squeeze(2)
 
     # compute both coverage
@@ -145,7 +145,7 @@ def evaluate_samples(t_sample, gt_t, type_sample, event_type, opt):
 
     # compute corr_type
     type_sample, mode, _ = type_sample
-    truth = event_type[:, 1:] - 1
+    truth = event_type[:, 1:] - 1  # cuz padding was 0
     if mode in ['logit', 'intensity']:
         predictions = torch.max(softmaxes, -1)[1]
     else:
@@ -164,7 +164,7 @@ def predict_langevin_smurf(model, event_time, time_gap, event_type, prediction,
     n_samples = opt.n_samples
     diff_time = time_gap * non_pad_mask[:, 1:].squeeze(2)
 
-    if sample_init is None:
+    if sample_init is None:  # t0, paper-p4右下
         t = torch.rand([*diff_time.size(), n_samples],
                        device=event_type.device) * (opt.time_95 -
                                                     opt.time_05) + opt.time_05
@@ -180,7 +180,7 @@ def predict_langevin_smurf(model, event_time, time_gap, event_type, prediction,
                 t, None, None, None, non_pad_mask).detach() + sqrt_e * z
             t[t_new > 0] = t_new[t_new > 0]
     elif opt.sampling_method == 'normal':
-        for _ in range(opt.n_save_steps):
+        for _ in range(opt.n_save_steps):  # p4右下
             z = torch.randn_like(t)
             t = t + 0.5 * e * model.get_score(
                 t, None, None, None, non_pad_mask).detach() + sqrt_e * z
@@ -188,7 +188,7 @@ def predict_langevin_smurf(model, event_time, time_gap, event_type, prediction,
     # A single denoising step if we add noise once
     # we repeat the last langevin step to ensure all samples are positive
     if opt.add_noise == 'denoise' and opt.is_last and opt.denoise_step:
-        i = 0
+        # i = 0  # paper-p5左上
         t_final = t + opt.var_noise**2 * model.get_score(
             t, None, None, None, non_pad_mask).detach()
         # while (t_final * non_pad_mask[:,1:] < -1e-5).any() and i<100:
@@ -200,7 +200,7 @@ def predict_langevin_smurf(model, event_time, time_gap, event_type, prediction,
         #     i += 1
     else:
         t_final = t
-    t_final.required_grads = False
+    t_final.required_grads = False  # (bsz, seqlen-1, num_samples)
 
     if opt.conditional_sampling:
         t_type = diff_time
@@ -221,7 +221,7 @@ def predict_langevin_smurf(model, event_time, time_gap, event_type, prediction,
             1,
             replacement=True).reshape(t.size()[:3])  # batch*len-1*num_samples
         type_sample = (samples, 'sample', None)
-    return t_final, diff_time, type_sample
+    return t_final, diff_time, type_sample  # dt_pred, dt_gt:(bsz, seqlen-1), type_pred
 
 
 def predict_langevin_baseline(model, event_time, time_gap, event_type,
@@ -302,8 +302,8 @@ class LabelSmoothingLoss(nn.Module):
 
     def forward(self, output, target, logit):
         """
-        output (FloatTensor): (batch_size) x n_classes
-        target (LongTensor): batch_size
+        output (FloatTensor): (batch_size, seqlen-1, num_noises, n_classes)
+        target (LongTensor): (batch_size, seqlen, 1)
         """
 
         non_pad_mask = target.ne(self.ignore_index).float()
@@ -311,7 +311,7 @@ class LabelSmoothingLoss(nn.Module):
         target[target.eq(self.ignore_index)] = 0
         one_hot = F.one_hot(target, num_classes=self.num_classes).float()
         one_hot = one_hot * (1 - self.eps) + (
-            1 - one_hot) * self.eps / self.num_classes
+            1 - one_hot) * self.eps / self.num_classes  # 1 -> n_classes
         if logit:
             log_prb = F.log_softmax(output, dim=-1)
         else:
@@ -319,4 +319,4 @@ class LabelSmoothingLoss(nn.Module):
 
         loss = -(one_hot * log_prb).sum(dim=-1)
         loss = loss * non_pad_mask
-        return loss
+        return loss  # (batch_size, seqlen-1, num_noises)

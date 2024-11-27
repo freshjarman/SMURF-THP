@@ -27,14 +27,15 @@ def get_obj(t_var, score, non_pad_mask):
 
 def get_obj_denoise(t_true, t_var, score, var_noise, non_pad_mask):
     # t_true: (batch*len-1)
-    # t_var: (batch*len-1*num_samples)
+    # t_var: (batch*len-1*num_noises)
     var_noise = var_noise
-    target = (t_true[:, :, None] - t_var) / var_noise**2
-    obj = 0.5 * (score - target)**2
-    obj *= var_noise**2
+    target = (t_true[:, :, None] - t_var) / var_noise**2  # paper-p4左下
+    obj = 0.5 * (score -
+                 target)**2  # FIXME: should be 0.5 * (score**2 - target)**2
+    obj *= var_noise**2  # TODO: Why need multiply var_noise**2?
     obj *= non_pad_mask[:, 1:, :]
     obj = obj.mean(2)
-    return obj
+    return obj  # (bsz, seqlen-1)
 
 
 class intensity_encode(nn.Module):
@@ -70,9 +71,9 @@ class intensity_encode(nn.Module):
                   time_gap,
                   non_pad_mask,
                   idx=None):
-        """Output scores for add_noise = None/denoise"""
-        # t: time of events; t could be the training gt of size: (batch*len-1)/(batch*len-1*num_noise) or langevin sampling of size:(batch*len-1*num_samples)
-        # event_type: event types; could be the gt or the prediction types (batch*len)
+        """Output scores for add_noise = None or denoise"""
+        # t: d_time of events; t could be the training gt of size: (batch*len-1)/(batch*len-1*num_noise) or langevin sampling of size:(batch*len-1*num_samples)
+        # event_type: event types; could be the gt or the prediction types (batch*len-1), cuz removed the first event
         # non_pad_mask: (batch*len*1)
 
         if t.ndim == 2:
@@ -84,20 +85,20 @@ class intensity_encode(nn.Module):
 
         # tem_enc = self.encoder.temporal_enc(t, non_pad_mask[:,1:,:,None]) # batch*len-1*1/num_samples*d_model
 
-        intensity = torch.tanh(
-            self.affect[:, :-1, None, :] * t.unsqueeze(3) +
-            self.base[:, :-1, None, :])  # batch*len-1*1/num_samples*d_model
+        # batch*len-1*num_samples*d_model
+        intensity = torch.tanh(self.affect[:, :-1, None, :] * t.unsqueeze(3) +
+                               self.base[:, :-1, None, :])
         intensity = self.intensity_layer(intensity).squeeze(
-            3)  # (batch*len-1*1/num_samples)
+            3)  # (batch*len-1*1/num_samples); paper-p4右
         intensity = intensity * non_pad_mask[:, 1:, :]
         intensity_log = (intensity + 1e-10).log() * non_pad_mask[:, 1:, :]
-
+        # TODO: to understand why use `intensity_log.sum()` w.r.t. t
         intensity_grad_t = torch.autograd.grad(
             intensity_log.sum(), t, retain_graph=True)[0] * non_pad_mask[:,
                                                                          1:, :]
-        score = intensity_grad_t - intensity
+        score = intensity_grad_t - intensity  # paper-p3右上
 
-        return score
+        return score  # (bsz, seqlen-1, num_noises)
 
 
 class score_encode(nn.Module):
@@ -148,7 +149,7 @@ class score_encode(nn.Module):
 
 
 class Predictor_with_time(nn.Module):
-    """ Prediction of next event type. """
+    """ Prediction of next event type. Don't predict based on the last event. """
 
     def __init__(self, dim, num_types):
         super().__init__()
@@ -169,9 +170,9 @@ class Predictor_with_time(nn.Module):
         if t.ndim == 2:
             t = t.unsqueeze(2)
         assert t.ndim == 3
-
+        # element-wise mul: (bsz, seqlen-1, num_noises, d_model); Don't predict based on the last event.
         out = torch.tanh(self.affect[:, :-1, None, :] * t.unsqueeze(3) +
                          self.base[:, :-1, None, :])
         out = self.classifier(out)
         out = out * non_pad_mask[:, 1:, :, None]
-        return out
+        return out  # (bsz, seqlen-1, num_noises, num_types)

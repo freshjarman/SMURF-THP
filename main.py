@@ -1,4 +1,5 @@
 import argparse
+import os
 import numpy as np
 import pickle
 import time
@@ -43,10 +44,10 @@ def prepare_dataloader(opt):
     if opt.normalize == 'normal':
         mean_data = time_flat.mean().item()
         train_sample /= mean_data
-    if opt.normalize == 'log':
+    if opt.normalize == 'log':  # TODO: check if this is correct; ref to `Dataset.py-45`: log(time_flat/mean_data + 1e-9).mean(); 它总是先除以mean_data再取log
         train_sample = train_sample.log()
-        mean_data = time_flat.log().mean().item()
         var_data = time_flat.log().std().item()
+        mean_data = time_flat.log().mean().item()
         train_sample = (train_sample - mean_data) / var_data
 
     print('[Info] Loading dev data...')
@@ -65,7 +66,7 @@ def prepare_dataloader(opt):
     print('time_min:', opt.time_min)
     print('time_max:', opt.time_max)
 
-    return trainloader, devloader, testloader, num_types, train_sample
+    return trainloader, devloader, testloader, num_types, train_sample  # TODO: train_sample有什么用？
 
 
 def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
@@ -81,12 +82,12 @@ def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
                       mininterval=2,
                       desc='  - (Training)   ',
                       leave=False):
-        """ prepare data """
+        """ prepare data """  # TODO: ! time_gap: (bsz, seq_len-1), find where it is made
         event_time, time_gap, event_type = map(lambda x: x.to(opt.device),
                                                batch)
         """ forward """
         optimizer.zero_grad()
-        # forward
+        # forward (enc_out: score loss)
         enc_out, prediction = model(event_type, event_time, time_gap)
         # compute the loss
         loss = model.compute_loss(enc_out, event_time, time_gap, event_type,
@@ -96,7 +97,7 @@ def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
         if prediction is not None:
             pred_type = torch.max(prediction, dim=-1)[1]
             if prediction.ndim == 4:
-                pred_type = torch.mode(pred_type, 2)[0]
+                pred_type = torch.mode(pred_type, 2)[0]  # 众数值
             pred_num_event = torch.sum(pred_type == truth)
         else:
             pred_num_event = torch.tensor([0])
@@ -105,11 +106,11 @@ def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
         optimizer.step()
         """ note keeping """
         total_event_ll += loss.item()
-        total_event_rate += pred_num_event.item()
-        total_num_event += event_type.ne(Constants.PAD).sum().item()
-        # we do not predict the first event
-        total_num_pred += event_type.ne(
-            Constants.PAD).sum().item() - event_time.shape[0]
+        total_event_rate += pred_num_event.item()  # correct prediction num
+        total_num_event += event_type.ne(
+            Constants.PAD).sum().item()  # event_type: seqlen
+        total_num_pred += event_type.ne(Constants.PAD).sum().item(
+        ) - event_time.shape[0]  # we do not predict the first event
 
     return total_event_ll / total_num_event, total_event_rate / total_num_pred
 
@@ -121,18 +122,18 @@ def eval_epoch(model,
                train_sample,
                opt,
                langevin_init_step=0,
-               sample_init=None):
+               sample_init=None):  # FIXME: train_sample not used
     """ Epoch operation in evaluation phase. """
 
     model.eval()
-
     total_event_ll = 0  # cumulative event log-likelihood
     total_event_rate = 0  # cumulative number of correct prediction
     total_num_event = 0  # number of total events
-    total_num_pred = 0  # number of predictions
+    total_num_pred = 0  # number of predictions (we don't predict the first event)
     total_coverage_single = torch.zeros(len(opt.eval_quantile))
-    total_intlen = torch.zeros(len(opt.eval_quantile))
-    total_crps = 0
+    total_intlen = torch.zeros(len(
+        opt.eval_quantile))  # [0.05, 0.1, ..., 0.95]
+    total_crps = 0  # CRPS metric
 
     start = time.time()
     """ Compute the loss and accuracy first -- no sampling """
@@ -141,7 +142,7 @@ def eval_epoch(model,
                  mininterval=2,
                  desc='  - (Evaluating) ',
                  leave=False)):
-        # prepare data
+        # prepare data, only time_gap is seqlen-1
         event_time, time_gap, event_type = map(lambda x: x.to(opt.device),
                                                batch)
         # forward
@@ -205,9 +206,9 @@ def eval_epoch(model,
                 total_corr_type = 0
 
                 t_list = []  # sample time list
+                pred_type_list = []  # sample type list
                 gt_t_list = []  # gt time list
                 gt_type_list = []  # gt type list
-                pred_type_list = []  # sample type list
 
                 for idx, batch in enumerate(
                         tqdm(validation_data,
@@ -235,7 +236,7 @@ def eval_epoch(model,
                     total_crps += crps.item()
                     total_corr_type += corr_type.item()
 
-                    t_list.append(t_sample)
+                    t_list.append(t_sample)  # predicted time
                     # gt_type_list.append(event_type[:,1:]) # XXXXX: save event type
                     pred_type_list.append(type_sample)
                     # gt_t_list.append(gt_t)
@@ -250,7 +251,7 @@ def eval_epoch(model,
                 total_crps /= total_num_pred
                 total_corr_type /= total_num_pred
 
-                # compute calibration score from coverage
+                # compute calibration score from coverage, p6左上; [0.5, 0.55, ..., 0.95]
                 big_idx_single = int(len(opt.eval_quantile) / 2)
                 cs_single = np.sqrt(((total_coverage_single[-4:] -
                                       opt.eval_quantile[-4:])**2).mean())
@@ -299,11 +300,13 @@ def eval_epoch(model,
             results_all_pd = pd.DataFrame(
                 [results_all[i] for i in results_all.keys()]).transpose()
             results_all_pd.columns = results_all.keys()
+            if not os.path.exists(opt.save_result):
+                os.makedirs(opt.save_result)
             results_all_pd.to_csv(opt.save_result + f"_results_all.csv")
             # print('Result saved to', opt.save_result+f".best_step.pth !!!!!")
 
         print(
-            '  - (Best Langevin results) : loss: {ll: 8.3f}, Accuracy: {type: 8.3f}, Calibration score: {cs1: 8.3f}/{csb1: 8.3f}/{cs2: 8.3f}/{csb2: 8.3f}, '
+            '  - (Best Langevin results) : loss: {ll: 8.3f}, Accuracy: {type: 8.3f}, Calibration score: {cs1: 8.3f}/{csb1: 8.3f}, '
             'CRPS: {crps: 8.3f}, Interval Length: {intlen: 8.3f}, elapse: {elapse:3.3f} min'
             .format(ll=total_event_ll / total_num_event,
                     type=best_results['accuracy'],
@@ -312,7 +315,7 @@ def eval_epoch(model,
                     crps=best_results['crps'],
                     intlen=best_results['intlen'][big_idx_single],
                     elapse=(time.time() - start) / 60))
-    return best_results
+    return total_event_ll / total_num_event, best_results
 
 
 def train(config=None):
@@ -389,6 +392,8 @@ def train(config=None):
                     print('!!! Saving best model to ' + config.save_path +
                           config.save_name + '.pth!!!')
                     best_loss = valid_loss
+                    if not os.path.exists(config.save_path):
+                        os.makedirs(config.save_path)
                     torch.save(
                         {
                             'model': model.state_dict(),
@@ -396,10 +401,13 @@ def train(config=None):
                             'epoch': epoch_i
                         }, config.save_path + config.save_name + '.pth')
 
+            # Test stage
             if epoch >= config.eval_epoch:
                 start = time.time()
-                test_loss, test_acc = eval_epoch(model, testloader,
-                                                 pred_loss_func, True, config)
+                test_loss, test_results = eval_epoch(model, testloader,
+                                                     pred_loss_func, True,
+                                                     train_sample, config)
+                test_acc = test_results['accuracy']
                 print(
                     '  - (Testing)   loss: {ll: 8.5f}, accuracy: {type: 8.5f}, elapse: {elapse:3.3f} min'
                     .format(ll=test_loss,
@@ -481,7 +489,7 @@ def main():
     parser.add_argument('-seed', type=int, default=2023)
 
     #### training option
-    parser.add_argument('-epoch', type=int, default=50)
+    parser.add_argument('-epoch', type=int, default=1)  # FIXME: default=50
     parser.add_argument('-eval_epoch', type=int, default=1)
     parser.add_argument('-batch_size', type=int, default=16)
     parser.add_argument('-lr', type=float, default=1e-4)
@@ -529,13 +537,16 @@ def main():
     parser.add_argument('-just_eval', action='store_true')
     parser.add_argument('-load_path_name', type=str, default=None)
     parser.add_argument('-save_result', type=str, default=None)
-    parser.add_argument('-sample_init', type=str, default=None)
+    parser.add_argument('-sample_init', type=str, default=None)  # t0, p4右下
 
-    #### score matching sampling option
-    parser.add_argument('-langevin_step', type=float, default=5e-2)
-    parser.add_argument('-n_steps', type=int, default=100)
-    parser.add_argument('-n_save_steps', type=int, default=100)
-    parser.add_argument('-n_samples', type=int, default=100)
+    #### score matching sampling option TODO：comment on each argument!
+    parser.add_argument('-langevin_step', type=float,
+                        default=5e-2)  # ε in paper-p4右下
+    parser.add_argument('-n_steps', type=int,
+                        default=100)  # 和denoise的次数有关（间接根据加噪几次来分几回denoise）
+    parser.add_argument('-n_save_steps', type=int,
+                        default=100)  # LD steps_num, N in paper-p5左上
+    parser.add_argument('-n_samples', type=int, default=100)  # 对每个t的采样个数
     parser.add_argument('-sampling_method',
                         type=str,
                         choices=['normal', 'truncated'],

@@ -31,7 +31,7 @@ def get_subsequent_mask(seq):
     subsequent_mask = torch.triu(torch.ones((len_s, len_s),
                                             device=seq.device,
                                             dtype=torch.uint8),
-                                 diagonal=1)
+                                 diagonal=1)  # 主对角线及其下的元素set为0，其余为1（即保留）
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1,
                                                           -1)  # b x ls x ls
     return subsequent_mask
@@ -71,7 +71,7 @@ class EncoderLayer(nn.Module):
         enc_output = self.pos_ffn(enc_output)
         enc_output *= non_pad_mask
 
-        return enc_output, enc_slf_attn
+        return enc_output, enc_slf_attn  # (bsz, seq_len, d_model); (bsz, n_heads, seq_len, seq_len)
 
 
 class Encoder(nn.Module):
@@ -84,10 +84,13 @@ class Encoder(nn.Module):
         self.d_model = d_model
 
         # position vector, used for temporal encoding
-        self.position_vec = torch.tensor([
-            math.pow(10000.0, 2.0 * (i // 2) / d_model) for i in range(d_model)
-        ],
-                                         device=torch.device('cuda'))
+        self.position_vec = torch.tensor(
+            [
+                math.pow(10000.0, 2.0 * (i // 2) / d_model)
+                for i in range(d_model)
+            ],
+            device=torch.device('cuda')
+            if torch.cuda.is_available() else torch.device('cpu'))
 
         # event type embedding
         self.event_emb = nn.Embedding(num_types + 1,

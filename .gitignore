@@ -23,5 +23,6 @@ log
 
 checkpoints/*
 data/*
+results
 
 test.ipynb

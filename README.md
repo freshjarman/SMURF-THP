@@ -6,12 +6,23 @@ Code for SMURF-THP: Score Matching-based UnceRtainty quantiFication for Transfor
 * [Anaconda](https://www.anaconda.com/) contains all the required packages.
 * [PyTorch](https://pytorch.org/) version 1.8.0.
 
+### Implementations
+
+
+
 ### Instructions
 * Put the data folder inside the root folder (i.e. parent folder of `SMURF-THP`), modify the **data** entry in **.sh** files accordingly. The datasets are available [here](https://drive.google.com/drive/folders/0BwqmV0EcoUc8UklIR1BKV25YR1U?resourcekey=0-OrlU87jyc1m-dVMmY5aC4w&usp=sharing).
 ```
 cd scripts/so
 # train and evaluate the model
 bash smurf_so.sh
+```
+
+```
+# Debug training (# add -debug / or use VSCode UI to debug)
+-data ../data/data_so/fold1/ -save_path ./checkpoints/so/ -save_name so_smurf_thp_debug_test -load_path_name ./checkpoints/so/so_smurf_thp_debug_test.pth -save_result ./results/so/so_smurf_thp_debug_test_samples -add_noise denoise
+# Debug evaluation 
+- just_eval # add behind the above command
 ```
 
 ## Metric: Calibration Score
