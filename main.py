@@ -426,7 +426,8 @@ def eval(config=None):
 
     if True:
         # default device is CUDA
-        config.device = torch.device('cuda')
+        config.device = torch.device(
+            'cuda') if torch.cuda.is_available() else torch.device('cpu')
 
         # print('[Info] parameters: {}'.format(config))
         print(

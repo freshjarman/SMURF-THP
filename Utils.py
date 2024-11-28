@@ -147,6 +147,8 @@ def evaluate_samples(t_sample, gt_t, type_sample, event_type, opt):
     type_sample, mode, _ = type_sample
     truth = event_type[:, 1:] - 1  # cuz padding was 0
     if mode in ['logit', 'intensity']:
+        # FIXME: ! here type_sample is the logit of the prediction, (bsz, seqlen-1, num_types)
+        softmaxes = type_sample.softmax(-1)
         predictions = torch.max(softmaxes, -1)[1]
     else:
         predictions = torch.mode(type_sample, 2)[0]
